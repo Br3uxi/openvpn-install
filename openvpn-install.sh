@@ -994,26 +994,6 @@ verb 3" >> /etc/openvpn/client-template.txt
 		echo "compress $COMPRESSION_ALG" >> /etc/openvpn/client-template.txt
 	fi
 
-	if [[ $UFW_FIREWALL == 1 ]]; then
-		until [[ $RESTART_UFW =~ (y|n) ]]; do
-			echo ""
-			echo "To confirm the firewall configuration you have to restart UFW!"
-			read -rp "Do you want to restart UFW now? [y/n]: " -e $RESTART_UFW
-		done
-
-		if [[ "$RESTART_UFW" = 'y' ]]; then
-			
-			ufw disable
-			ufw enable
-
-			echo ""
-			echo "UFW was restarted!"
-		else
-			echo ""
-			echo "Please restart UFW yourself to register Ports"
-		fi
-	fi
-
 	# Generate the custom client.ovpn
 	newClient
 	echo "If you want to add more clients, you simply need to run this script another time!"

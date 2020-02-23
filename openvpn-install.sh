@@ -891,61 +891,75 @@ verb 3" >> /etc/openvpn/server.conf
 		installUnbound
 	fi
 
-	# Add iptables rules in two scripts
-	mkdir /etc/iptables
+	if [[ -e /etc/ufw/ufw.conf ]]; then
+		UFW_FIREWALL=1
+		echo "[OpenVPN]
+	title=OpenVPN, VPN Server
+	description=OpenVPN is an open source VPN daemon
+	ports=$PORT/$PROTOCOL" > /etc/ufw/applications.d/openvpn
 
-	# Script to add rules
-	echo "#!/bin/sh
-iptables -t nat -I POSTROUTING 1 -s 10.8.0.0/24 -o $NIC -j MASQUERADE
-iptables -I INPUT 1 -i tun0 -j ACCEPT
-iptables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT
-iptables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT
-iptables -I INPUT 1 -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" > /etc/iptables/add-openvpn-rules.sh
+		ufw allow OpenVPN
+		
+	else
+		UFW_FIREWALL=0
 
-	if [[ "$IPV6_SUPPORT" = 'y' ]]; then
-		echo "ip6tables -t nat -I POSTROUTING 1 -s fd42:42:42:42::/112 -o $NIC -j MASQUERADE
-ip6tables -I INPUT 1 -i tun0 -j ACCEPT
-ip6tables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT
-ip6tables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
+			# Add iptables rules in two scripts
+		mkdir /etc/iptables
+
+		# Script to add rules
+		echo "#!/bin/sh
+	iptables -t nat -I POSTROUTING 1 -s 10.8.0.0/24 -o $NIC -j MASQUERADE
+	iptables -I INPUT 1 -i tun0 -j ACCEPT
+	iptables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT
+	iptables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT
+	iptables -I INPUT 1 -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" > /etc/iptables/add-openvpn-rules.sh
+
+		if [[ "$IPV6_SUPPORT" = 'y' ]]; then
+			echo "ip6tables -t nat -I POSTROUTING 1 -s fd42:42:42:42::/112 -o $NIC -j MASQUERADE
+	ip6tables -I INPUT 1 -i tun0 -j ACCEPT
+	ip6tables -I FORWARD 1 -i $NIC -o tun0 -j ACCEPT
+	ip6tables -I FORWARD 1 -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/add-openvpn-rules.sh
+		fi
+
+		# Script to remove rules
+		echo "#!/bin/sh
+	iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o $NIC -j MASQUERADE
+	iptables -D INPUT -i tun0 -j ACCEPT
+	iptables -D FORWARD -i $NIC -o tun0 -j ACCEPT
+	iptables -D FORWARD -i tun0 -o $NIC -j ACCEPT
+	iptables -D INPUT -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" > /etc/iptables/rm-openvpn-rules.sh
+
+		if [[ "$IPV6_SUPPORT" = 'y' ]]; then
+			echo "ip6tables -t nat -D POSTROUTING -s fd42:42:42:42::/112 -o $NIC -j MASQUERADE
+	ip6tables -D INPUT -i tun0 -j ACCEPT
+	ip6tables -D FORWARD -i $NIC -o tun0 -j ACCEPT
+	ip6tables -D FORWARD -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
+		fi
+
+		chmod +x /etc/iptables/add-openvpn-rules.sh
+		chmod +x /etc/iptables/rm-openvpn-rules.sh
+
+		# Handle the rules via a systemd script
+		echo "[Unit]
+	Description=iptables rules for OpenVPN
+	Before=network-online.target
+	Wants=network-online.target
+
+	[Service]
+	Type=oneshot
+	ExecStart=/etc/iptables/add-openvpn-rules.sh
+	ExecStop=/etc/iptables/rm-openvpn-rules.sh
+	RemainAfterExit=yes
+
+	[Install]
+	WantedBy=multi-user.target" > /etc/systemd/system/iptables-openvpn.service
+
+		# Enable service and apply rules
+		systemctl daemon-reload
+		systemctl enable iptables-openvpn
+		systemctl start iptables-openvpn
 	fi
 
-	# Script to remove rules
-	echo "#!/bin/sh
-iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o $NIC -j MASQUERADE
-iptables -D INPUT -i tun0 -j ACCEPT
-iptables -D FORWARD -i $NIC -o tun0 -j ACCEPT
-iptables -D FORWARD -i tun0 -o $NIC -j ACCEPT
-iptables -D INPUT -i $NIC -p $PROTOCOL --dport $PORT -j ACCEPT" > /etc/iptables/rm-openvpn-rules.sh
-
-	if [[ "$IPV6_SUPPORT" = 'y' ]]; then
-		echo "ip6tables -t nat -D POSTROUTING -s fd42:42:42:42::/112 -o $NIC -j MASQUERADE
-ip6tables -D INPUT -i tun0 -j ACCEPT
-ip6tables -D FORWARD -i $NIC -o tun0 -j ACCEPT
-ip6tables -D FORWARD -i tun0 -o $NIC -j ACCEPT" >> /etc/iptables/rm-openvpn-rules.sh
-	fi
-
-	chmod +x /etc/iptables/add-openvpn-rules.sh
-	chmod +x /etc/iptables/rm-openvpn-rules.sh
-
-	# Handle the rules via a systemd script
-	echo "[Unit]
-Description=iptables rules for OpenVPN
-Before=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/etc/iptables/add-openvpn-rules.sh
-ExecStop=/etc/iptables/rm-openvpn-rules.sh
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target" > /etc/systemd/system/iptables-openvpn.service
-
-	# Enable service and apply rules
-	systemctl daemon-reload
-	systemctl enable iptables-openvpn
-	systemctl start iptables-openvpn
 
 	# If the server is behind a NAT, use the correct IP address for the clients to connect to
 	if [[ "$ENDPOINT" != "" ]]; then
@@ -976,9 +990,29 @@ tls-cipher $CC_CIPHER
 setenv opt block-outside-dns # Prevent Windows 10 DNS leak
 verb 3" >> /etc/openvpn/client-template.txt
 
-if [[ $COMPRESSION_ENABLED == "y"  ]]; then
-	echo "compress $COMPRESSION_ALG" >> /etc/openvpn/client-template.txt
-fi
+	if [[ $COMPRESSION_ENABLED == "y"  ]]; then
+		echo "compress $COMPRESSION_ALG" >> /etc/openvpn/client-template.txt
+	fi
+
+	if [[ $UFW_FIREWALL == 1 ]]; then
+		until [[ $RESTART_UFW =~ (y|n) ]]; do
+			echo ""
+			echo "To confirm the firewall configuration you have to restart UFW!"
+			read -rp "Do you want to restart UFW now? [y/n]: " -e $RESTART_UFW
+		done
+
+		if [[ "$RESTART_UFW" = 'y' ]]; then
+			
+			ufw disable
+			ufw enable
+
+			echo ""
+			echo "UFW was restarted!"
+		else
+			echo ""
+			echo "Please restart UFW yourself to register Ports"
+		fi
+	fi
 
 	# Generate the custom client.ovpn
 	newClient
